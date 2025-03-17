@@ -14,10 +14,10 @@ A Discord bot for managing media items in Riven using TMDB, featuring interactiv
 - TMDB API key
 
 ## Commands
-- `!health`: Check Riven status.
-- `!search <query>`: Search and manage items.
-- `!logs`: View logs.
-- `!services`: List services.
+- `/health`: Check Riven status.
+- `/search <query>`: Search and manage items.
+- `/logs`: View logs.
+- `/services`: List services.
 
 ## Contributing
 Fork, submit pull requests, or open issues! See [SETUP.md](SETUP.md) for detailed setup.
