@@ -3,6 +3,6 @@
     "riven_api_token": "riven_api_token",
     "discord_bot_token": "discord_bot_token",
     "whitelist": ["you_discord_username"],
-    "bot_prefix": "/",
+    "bot_prefix": "!",
     "tmdb_api_key": "tmdb_api_token"
 }

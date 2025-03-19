@@ -47,7 +47,7 @@ Create `config.json` by copying `config.example.json` and filling in these field
   "riven_api_token": "your_riven_api_token_here",
   "discord_bot_token": "your_discord_bot_token_here",
   "whitelist": ["your_discord_username#1234"],
-  "bot_prefix": "/",
+  "bot_prefix": "!",
   "tmdb_api_key": "your_tmdb_api_key_here"
 }
 ```

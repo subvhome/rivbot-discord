@@ -21,7 +21,6 @@ def load_config():
 
 # Send response based on length
 async def send_response(ctx, content):
-    """Send a response to the channel, as text if under 2000 chars, or as a file if over."""
     content_str = str(content)
     if len(content_str) <= 2000:
         await ctx.send(content_str)
@@ -35,7 +34,7 @@ async def send_response(ctx, content):
 def query_riven_api(endpoint, config, method="GET", params=None, json_data=None):
     url = f"{config['riven_api_url']}/{endpoint}"
     headers = {"x-api-key": config["riven_api_token"]}
-    print(f"Querying Riven API: {method} {url} with params {params}")
+    logger.debug(f"Querying Riven API: {method} {url} with params {params}")
     try:
         if method == "GET":
             response = requests.get(url, headers=headers, params=params)
@@ -46,16 +45,13 @@ def query_riven_api(endpoint, config, method="GET", params=None, json_data=None)
         response.raise_for_status()
         try:
             data = response.json()
-            print(f"Riven API response: {data}")
+            logger.debug(f"Riven API response: {data}")
             return data
         except ValueError:
             return response.text
     except requests.RequestException as e:
-        if hasattr(e.response, "text"):
-            error = {"error": f"API error: {e.response.status_code} - {e.response.text}"}
-        else:
-            error = {"error": f"Request failed: {str(e)}"}
-        print(f"Riven API error: {error}")
+        error = {"error": f"API error: {e.response.status_code} - {e.response.text}" if hasattr(e.response, "text") else f"Request failed: {str(e)}"}
+        logger.error(f"Riven API error: {error}")
         return error
 
 # Health check
@@ -75,265 +71,117 @@ async def health_check(config):
         logger.error(f"Error while checking health: {str(e)}")
         return f"Error while checking health: {str(e)}"
 
-# Search TMDB extended with additional details for media card
+# Search TMDB with extended details (with improved logging and error handling)
 def search_tmdb_extended(query, config, limit=50):
     tmdb_search_url = "https://api.themoviedb.org/3/search/multi"
     params = {"api_key": config["tmdb_api_key"], "query": query, "include_adult": False}
     try:
+        logger.debug(f"Searching TMDB: {tmdb_search_url} with params {params}")
         response = requests.get(tmdb_search_url, params=params)
         response.raise_for_status()
         data = response.json()
+        logger.debug(f"TMDB search results: {len(data.get('results', []))} items found")
         results = []
         for result in data.get("results", [])[:limit]:
             tmdb_id = result["id"]
             media_type = result["media_type"]
             details_url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}"
+            logger.debug(f"Fetching details from: {details_url}")
             details_response = requests.get(details_url, params={"api_key": config["tmdb_api_key"]})
             details_response.raise_for_status()
             details = details_response.json()
             name = result.get("title", result.get("name", "Unknown"))
             year = result.get("release_date", result.get("first_air_date", ""))[:4]
             rating = details.get("vote_average", "N/A")
-            imdb_id = details.get("imdb_id", "N/A")
-            tmdb_id = details.get("id", "N/A")
+            vote_count = details.get("vote_count", 0)
             poster = f"https://image.tmdb.org/t/p/w500{details.get('poster_path', '')}" if details.get("poster_path") else "No poster"
             description = details.get("overview", "No description")[:150] + "..." if len(details.get("overview", "")) > 150 else details.get("overview", "No description")
-            vote_count = details.get("vote_count", 0)
-            results.append((name, year, rating, imdb_id, tmdb_id, poster, description, vote_count))
+            
+            # Fetch IMDb ID differently for TV shows
+            if media_type == "tv":
+                external_ids_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/external_ids"
+                logger.debug(f"Fetching external IDs for TV show: {external_ids_url}")
+                external_ids_response = requests.get(external_ids_url, params={"api_key": config["tmdb_api_key"]})
+                external_ids_response.raise_for_status()
+                external_ids = external_ids_response.json()
+                imdb_id = external_ids.get("imdb_id", "N/A")
+            else:
+                imdb_id = details.get("imdb_id", "N/A")
+            
+            if imdb_id == "N/A":
+                logger.warning(f"No IMDb ID found for {name} (TMDB ID: {tmdb_id}, Type: {media_type})")
+            else:
+                logger.debug(f"Found IMDb ID {imdb_id} for {name} (TMDB ID: {tmdb_id})")
+            
+            seasons = [(s["season_number"], s["name"], s["episode_count"]) for s in details.get("seasons", [])] if media_type == "tv" else []
+            results.append((name, year, rating, imdb_id, tmdb_id, poster, description, vote_count, media_type, seasons))
         return results
     except requests.RequestException as e:
+        logger.error(f"TMDB search failed: {str(e)}")
         return {"error": f"TMDB search failed: {str(e)}"}
+# Fetch TMDB episodes for a season
+def fetch_tmdb_episodes(tmdb_id, season_number, config):
+    url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}"
+    params = {"api_key": config["tmdb_api_key"]}
+    try:
+        logger.debug(f"Fetching episodes from: {url}")
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return [(e["episode_number"], e["name"], e["overview"][:97] + "..." if len(e["overview"]) > 97 else e["overview"]) for e in data.get("episodes", [])]
+    except requests.RequestException as e:
+        logger.error(f"TMDB episode fetch failed: {str(e)}")
+        return {"error": f"TMDB episode fetch failed: {str(e)}"}
 
-# Dropdown for selecting search results
+# Dynamic Dropdown
 class SearchDropdown(Select):
-    def __init__(self, results, page, total_pages, selected_value=None):
-        self.results = results
+    def __init__(self, items, page, total_pages, dropdown_type="items", selected_value=None, show_data=None):
+        self.items = items
         self.page = page
         self.total_pages = total_pages
-        options = [
-            SelectOption(
-                label=f"{name} ({year}) - Rating: {rating}/10",
-                description=f"TMDB: {tmdb_id}",
-                value=str(idx + (page - 1) * 10),
-                default=(str(idx + (page - 1) * 10) == selected_value)
-            ) for idx, (name, year, rating, imdb_id, tmdb_id, _, _, _) in enumerate(results)
-        ]
-        super().__init__(placeholder=f"Select an item (Page {page}/{total_pages})", options=options)
+        self.dropdown_type = dropdown_type
+        self.show_data = show_data
+        options = []
+        if self.dropdown_type == "items":
+            options = [
+                SelectOption(
+                    label=f"{name} ({year}) - Rating: {rating}/10",
+                    description=f"TMDB: {tmdb_id}",
+                    value=str(idx + (page - 1) * 10),
+                    default=(str(idx + (page - 1) * 10) == selected_value)
+                ) for idx, (name, year, rating, _, tmdb_id, _, _, _, _, _) in enumerate(items)
+            ]
+        elif self.dropdown_type == "seasons":
+            options = [
+                SelectOption(
+                    label=f"Season {season_num} - {season_name}",
+                    description=f"Episodes: {episode_count}",
+                    value=str(idx + (page - 1) * 10),
+                    default=(str(idx + (page - 1) * 10) == selected_value)
+                ) for idx, (season_num, season_name, episode_count) in enumerate(items)
+            ]
+        elif self.dropdown_type == "episodes":
+            options = [
+                SelectOption(
+                    label=f"Episode {ep_num} - {ep_name}",
+                    description=ep_desc,
+                    value=str(idx + (page - 1) * 10),
+                    default=(str(idx + (page - 1) * 10) == selected_value)
+                ) for idx, (ep_num, ep_name, ep_desc) in enumerate(items)
+            ]
+        super().__init__(placeholder=f"Select {self.dropdown_type.capitalize()} (Page {page}/{total_pages})", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.view.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this menu!", ephemeral=True)
+            return
         selected_idx = int(self.values[0]) % 10
-        self.view.selected_item = self.results[selected_idx]
-        selected_value = self.values[0]
-        name, year, rating, imdb_id, tmdb_id, poster, description, vote_count = self.view.selected_item
-        print(f"Selected item: {name} (TMDB: {tmdb_id}, IMDb: {imdb_id})")
-
-        # Update dropdown
-        self.view.clear_items()
-        start = (self.page - 1) * 10
-        end = start + 10
-        page_results = self.view.all_results[start:end]
-        self.view.add_item(SearchDropdown(page_results, self.page, self.total_pages, selected_value))
-        self.view.add_item(self.view.prev_button)
-        self.view.add_item(self.view.next_button)
-        self.view.add_item(self.view.add_button)
-        self.view.add_item(self.view.remove_button)
-        self.view.add_item(self.view.retry_button)
-        self.view.add_item(self.view.reset_button)
-        self.view.add_item(self.view.pause_button)
-        self.view.add_item(self.view.unpause_button)
-        self.view.add_item(self.view.refresh_button)  # Add refresh button
-
-        # Check Riven for item existence, get internal ID and state
-        riven_response = query_riven_api("items", self.view.ctx.bot.config, params={"search": name, "limit": 50})
-        exists_in_riven = False
-        riven_id = None
-        riven_state = "Not in Riven"
-        if riven_response.get("success", False) and "items" in riven_response:
-            for item in riven_response["items"]:
-                if item.get("tmdb_id") == str(tmdb_id) or item.get("imdb_id") == imdb_id:
-                    exists_in_riven = True
-                    riven_id = item.get("id")
-                    riven_state = item.get("state", "Unknown")
-                    break
-        self.view.riven_id = riven_id
-        print(f"Checked in Riven: exists={exists_in_riven}, Riven ID={riven_id}, State={riven_state}")
-
-        # Update button states
-        self.view.update_button_states(exists_in_riven)
-
-        # Build media card with Riven status
-        media_card = (
-            f"**{name} ({year})**\n"
-            f"⭐ Rating: {rating}/10 ({vote_count} votes)\n"
-            f"📝 {description}\n"
-            f"🖼️ Poster: {poster}\n"
-            f"TMDB: {tmdb_id}\n"
-            f"🔄 Riven Status: {riven_state}"
-        )
-        content = f"🔎 TMDB results for '{self.view.ctx.message.content.split(' ', 1)[1]}':\n\n{media_card}"
-        if len(content) > 1900:  # Leave buffer for Discord
-            truncated_desc = description[:100] + "..."
-            media_card = (
-                f"**{name} ({year})**\n"
-                f"⭐ Rating: {rating}/10 ({vote_count} votes)\n"
-                f"📝 {truncated_desc}\n"
-                f"🖼️ Poster: {poster}\n"
-                f"TMDB: {tmdb_id}\n"
-                f"🔄 Riven Status: {riven_state}"
-            )
-            content = f"🔎 TMDB results for '{self.view.ctx.message.content.split(' ', 1)[1]}':\n\n{media_card}"
-        await interaction.response.edit_message(content=content, view=self.view)
-
-# View with dropdown and buttons for /search
-class SearchView(View):
-    def __init__(self, ctx, all_results, page=1):
-        super().__init__(timeout=60)
-        self.ctx = ctx
-        self.all_results = all_results
-        self.page = page
-        self.total_pages = math.ceil(len(all_results) / 10)
-        self.selected_item = None
-        self.riven_id = None
-        self.update_dropdown()
-
-    def update_dropdown(self):
-        self.clear_items()
-        start = (self.page - 1) * 10
-        end = start + 10
-        page_results = self.all_results[start:end]
-        self.add_item(SearchDropdown(page_results, self.page, self.total_pages))
-        self.add_item(self.prev_button)
-        self.add_item(self.next_button)
-        self.add_item(self.add_button)
-        self.add_item(self.remove_button)
-        self.add_item(self.retry_button)
-        self.add_item(self.reset_button)
-        self.add_item(self.pause_button)
-        self.add_item(self.unpause_button)
-        self.add_item(self.refresh_button)  # Add refresh button
-        self.children[1].disabled = self.page == 1  # Previous
-        self.children[2].disabled = self.page == self.total_pages  # Next
-        self.update_button_states(False)  # Initially disable all action buttons
-
-    def update_button_states(self, exists_in_riven):
-        self.children[3].disabled = exists_in_riven  # Add
-        self.children[4].disabled = not exists_in_riven  # Remove
-        self.children[5].disabled = not exists_in_riven  # Retry
-        self.children[6].disabled = not exists_in_riven  # Reset
-        self.children[7].disabled = not exists_in_riven  # Pause
-        self.children[8].disabled = not exists_in_riven  # Unpause
-        self.children[9].disabled = False  # Refresh always enabled
-        print(f"Button states: Add={not exists_in_riven}, Remove={exists_in_riven}, Retry={exists_in_riven}, Reset={exists_in_riven}, Pause={exists_in_riven}, Unpause={exists_in_riven}, Refresh=True")
-
-    @button(label="Previous", style=ButtonStyle.grey)
-    async def prev_button(self, interaction: discord.Interaction, button: Button):
-        if self.page > 1:
-            self.page -= 1
-            self.update_dropdown()
-            await interaction.response.edit_message(view=self)
-
-    @button(label="Next", style=ButtonStyle.grey)
-    async def next_button(self, interaction: discord.Interaction, button: Button):
-        if self.page < self.total_pages:
-            self.page += 1
-            self.update_dropdown()
-            await interaction.response.edit_message(view=self)
-
-    @button(label="Add", style=ButtonStyle.green)
-    async def add_button(self, interaction: discord.Interaction, button: Button):
-        if not self.selected_item:
-            await interaction.response.send_message("Select an item first!", ephemeral=True)
-            return
-        # Unpack all fields, including imdb_id
-        name, year, rating, imdb_id, tmdb_id, poster, description, vote_count = self.selected_item
-        # Check if imdb_id is valid
-        if imdb_id == "N/A":
-            await interaction.response.send_message("No IMDb ID available for this item!", ephemeral=True)
-            return
-        # Use imdb_ids instead of tmdb_ids
-        response = query_riven_api("items/add", self.ctx.bot.config, "POST", params={"imdb_ids": imdb_id})
-        if "error" in response:
-            await interaction.response.send_message(f"Failed to add {name}: {response['error']}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Added {name} (IMDb: {imdb_id})", ephemeral=True)
-            # Update riven_id if the API returns it
-            self.riven_id = response.get("ids", [None])[0]
-        await self.refresh_state(interaction)
-
-    @button(label="Remove", style=ButtonStyle.red)
-    async def remove_button(self, interaction: discord.Interaction, button: Button):
-        if not self.selected_item or not self.riven_id:
-            await interaction.response.send_message("Select an item first!", ephemeral=True)
-            return
-        name, _, _, _, tmdb_id, _, _, _ = self.selected_item
-        response = query_riven_api("items/remove", self.ctx.bot.config, "DELETE", params={"ids": self.riven_id})
-        if "error" in response:
-            await interaction.response.send_message(f"Failed to remove {name}: {response['error']}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Removed {name} (TMDB: {tmdb_id})", ephemeral=True)
-            self.riven_id = None
-        await self.refresh_state(interaction)
-
-    @button(label="Retry", style=ButtonStyle.green)
-    async def retry_button(self, interaction: discord.Interaction, button: Button):
-        if not self.selected_item or not self.riven_id:
-            await interaction.response.send_message("Select an item first!", ephemeral=True)
-            return
-        name, _, _, _, tmdb_id, _, _, _ = self.selected_item
-        response = query_riven_api("items/retry", self.ctx.bot.config, "POST", params={"ids": self.riven_id})
-        if "error" in response:
-            await interaction.response.send_message(f"Failed to retry {name}: {response['error']}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Retrying {name} (TMDB: {tmdb_id})", ephemeral=True)
-        await self.refresh_state(interaction)
-
-    @button(label="Reset", style=ButtonStyle.blurple)
-    async def reset_button(self, interaction: discord.Interaction, button: Button):
-        if not self.selected_item or not self.riven_id:
-            await interaction.response.send_message("Select an item first!", ephemeral=True)
-            return
-        name, _, _, _, tmdb_id, _, _, _ = self.selected_item
-        response = query_riven_api("items/reset", self.ctx.bot.config, "POST", params={"ids": self.riven_id})
-        if "error" in response:
-            await interaction.response.send_message(f"Failed to reset {name}: {response['error']}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Reset {name} (TMDB: {tmdb_id})", ephemeral=True)
-        await self.refresh_state(interaction)
-
-    @button(label="Pause", style=ButtonStyle.grey)
-    async def pause_button(self, interaction: discord.Interaction, button: Button):
-        if not self.selected_item or not self.riven_id:
-            await interaction.response.send_message("Select an item first!", ephemeral=True)
-            return
-        name, _, _, _, tmdb_id, _, _, _ = self.selected_item
-        response = query_riven_api("items/pause", self.ctx.bot.config, "POST", params={"ids": self.riven_id})
-        if "error" in response:
-            await interaction.response.send_message(f"Failed to pause {name}: {response['error']}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Paused {name} (TMDB: {tmdb_id})", ephemeral=True)
-        await self.refresh_state(interaction)
-
-    @button(label="Unpause", style=ButtonStyle.grey)
-    async def unpause_button(self, interaction: discord.Interaction, button: Button):
-        if not self.selected_item or not self.riven_id:
-            await interaction.response.send_message("Select an item first!", ephemeral=True)
-            return
-        name, _, _, _, tmdb_id, _, _, _ = self.selected_item
-        response = query_riven_api("items/unpause", self.ctx.bot.config, "POST", params={"ids": self.riven_id})
-        if "error" in response:
-            await interaction.response.send_message(f"Failed to unpause {name}: {response['error']}", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Unpaused {name} (TMDB: {tmdb_id})", ephemeral=True)
-        await self.refresh_state(interaction)
-
-    @button(label="Refresh Results", style=ButtonStyle.blurple)
-    async def refresh_button(self, interaction: discord.Interaction, button: Button):
-        await self.refresh_state(interaction)
-
-    async def refresh_state(self, interaction):
-        if self.selected_item:
-            name, year, rating, imdb_id, tmdb_id, poster, description, vote_count = self.selected_item
-            riven_response = query_riven_api("items", self.ctx.bot.config, params={"search": name, "limit": 50})
+        if self.dropdown_type == "items":
+            self.view.selected_item = self.items[selected_idx]
+            name, year, rating, imdb_id, tmdb_id, poster, description, vote_count, media_type, seasons = self.view.selected_item
+            self.view.media_type = media_type
+            logger.info(f"Selected item: {name} (TMDB: {tmdb_id}, IMDb: {imdb_id}, Type: {media_type})")
+            riven_response = query_riven_api("items", self.view.ctx.bot.config, params={"search": name, "limit": 50})
             exists_in_riven = False
             riven_id = None
             riven_state = "Not in Riven"
@@ -344,8 +192,10 @@ class SearchView(View):
                         riven_id = item.get("id")
                         riven_state = item.get("state", "Unknown")
                         break
-            self.riven_id = riven_id
-            self.update_button_states(exists_in_riven)
+            self.view.riven_id = riven_id
+            self.view.level = "show" if media_type == "tv" else "movie"
+            self.view.seasons = seasons if media_type == "tv" else []
+            self.view.update_view()
             media_card = (
                 f"**{name} ({year})**\n"
                 f"⭐ Rating: {rating}/10 ({vote_count} votes)\n"
@@ -354,24 +204,297 @@ class SearchView(View):
                 f"TMDB: {tmdb_id}\n"
                 f"🔄 Riven Status: {riven_state}"
             )
-            content = f"🔎 TMDB results for '{self.ctx.message.content.split(' ', 1)[1]}':\n\n{media_card}"
-            if len(content) > 1900:  # Leave buffer
-                truncated_desc = description[:100] + "..."
-                media_card = (
-                    f"**{name} ({year})**\n"
-                    f"⭐ Rating: {rating}/10 ({vote_count} votes)\n"
-                    f"📝 {truncated_desc}\n"
-                    f"🖼️ Poster: {poster}\n"
-                    f"TMDB: {tmdb_id}\n"
-                    f"🔄 Riven Status: {riven_state}"
-                )
-                content = f"🔎 TMDB results for '{self.ctx.message.content.split(' ', 1)[1]}':\n\n{media_card}"
-            # Check if the interaction has been responded to
-            if not interaction.response.is_done():
-                await interaction.response.edit_message(content=content, view=self)
-            else:
-                await interaction.message.edit(content=content, view=self)
+            query = self.view.query if hasattr(self.view, "query") else "Unknown query"
+            content = f"🔎 TMDB results for '{query}':\n\n{media_card}"
+        elif self.dropdown_type == "seasons":
+            self.view.selected_season = self.items[selected_idx]
+            season_num, season_name, _ = self.view.selected_season
+            episodes = fetch_tmdb_episodes(self.view.selected_item[4], season_num, self.view.ctx.bot.config)
+            if isinstance(episodes, dict) and "error" in episodes:
+                await interaction.response.edit_message(content=f"Failed to fetch episodes: {episodes['error']}", view=self.view)
+                return
+            self.view.episodes = episodes
+            self.view.level = "episode"
+            self.view.update_view()
+            name, year, _, _, tmdb_id, poster, description, vote_count, _, _ = self.view.selected_item
+            riven_state = await self.view.get_riven_state()
+            content = (
+                f"**{name} ({year}) - Season {season_num}: {season_name}**\n"
+                f"📝 {description}\n"
+                f"🖼️ Poster: {poster}\n"
+                f"TMDB: {tmdb_id}\n"
+                f"🔄 Riven Status: {riven_state}"
+            )
+        elif self.dropdown_type == "episodes":
+            self.view.selected_episode = self.items[selected_idx]
+            ep_num, ep_name, ep_desc = self.view.selected_episode
+            name, year, _, _, tmdb_id, poster, description, vote_count, _, _ = self.view.selected_item
+            season_num, season_name, _ = self.view.selected_season
+            riven_state = await self.view.get_riven_state()
+            content = (
+                f"**{name} ({year}) - Season {season_num}: {season_name} - Episode {ep_num}: {ep_name}**\n"
+                f"📝 {ep_desc}\n"
+                f"🖼️ Poster: {poster}\n"
+                f"TMDB: {tmdb_id}\n"
+                f"🔄 Riven Status: {riven_state}"
+            )
+            self.view.update_view()
+        if len(content) > 1900:
+            content = content[:1900] + "..."
+        await interaction.response.edit_message(content=content, view=self.view)
 
+# Dynamic View
+class SearchView(View):
+    def __init__(self, ctx, all_results, query, page=1):
+        super().__init__(timeout=300)  # Extended to 5 minutes for DMs
+        self.ctx = ctx
+        self.all_results = all_results
+        self.query = query
+        self.initiator_id = ctx.author.id  # Store the ID of the user who ran the command
+        self.page = page
+        self.total_pages = math.ceil(len(all_results) / 10)
+        self.selected_item = None
+        self.selected_season = None
+        self.selected_episode = None
+        self.riven_id = None
+        self.media_type = None
+        self.level = "items"
+        self.seasons = []
+        self.episodes = []
+        self.riven_data = None
+        self.update_view()
+
+    async def get_riven_state(self):
+        if not self.riven_id:
+            return "Not in Riven"
+        if not self.riven_data:
+            self.riven_data = query_riven_api(f"items/{self.riven_id}", self.ctx.bot.config)
+        if "error" in self.riven_data:
+            return f"Error: {self.riven_data['error']}"
+        if self.level in ["show", "movie"]:
+            return self.riven_data.get("state", "Unknown")
+        elif self.level == "episode" and self.selected_season:
+            season_num = self.selected_season[0]
+            for season in self.riven_data.get("seasons", []):
+                if season.get("number") == season_num:
+                    if self.selected_episode:
+                        ep_num = self.selected_episode[0]
+                        for episode in season.get("episodes", []):
+                            if episode.get("number") == ep_num:
+                                return episode.get("state", "Unknown")
+                    return season.get("state", "Unknown")
+            return "Season not found in Riven"
+        return "Unknown"
+
+    def update_view(self):
+        self.clear_items()
+
+        if self.level == "items":
+            start = (self.page - 1) * 10
+            end = start + 10
+            page_results = self.all_results[start:end]
+            dropdown = SearchDropdown(page_results, self.page, self.total_pages, "items")
+            self.add_item(dropdown)
+            self.add_item(self.prev_button)
+            self.add_item(self.next_button)
+            self.prev_button.disabled = self.page == 1
+            self.next_button.disabled = self.page == self.total_pages
+
+        elif self.level == "show":
+            total_pages = math.ceil(len(self.seasons) / 10)
+            start = (self.page - 1) * 10
+            end = start + 10
+            page_seasons = self.seasons[start:end]
+            dropdown = SearchDropdown(page_seasons, self.page, total_pages, "seasons", show_data=self.selected_item)
+            self.add_item(dropdown)
+            self.add_item(self.prev_button)
+            self.add_item(self.next_button)
+            self.add_item(self.add_button)
+            self.add_item(self.remove_button)
+            self.add_item(self.retry_button)
+            self.add_item(self.reset_button)
+            self.add_item(self.refresh_button)
+            exists_in_riven = self.riven_id is not None
+            self.prev_button.disabled = self.page == 1
+            self.next_button.disabled = self.page == total_pages
+            self.add_button.disabled = exists_in_riven
+            self.remove_button.disabled = not exists_in_riven
+            self.retry_button.disabled = not exists_in_riven
+            self.reset_button.disabled = not exists_in_riven
+            self.refresh_button.disabled = False  # Always enabled
+
+        elif self.level == "episode":
+            total_pages = math.ceil(len(self.episodes) / 10)
+            start = (self.page - 1) * 10
+            end = start + 10
+            page_episodes = self.episodes[start:end]
+            dropdown = SearchDropdown(page_episodes, self.page, total_pages, "episodes", show_data=self.selected_item)
+            self.add_item(dropdown)
+            self.add_item(self.prev_button)
+            self.add_item(self.next_button)
+            self.add_item(self.retry_button)
+            self.add_item(self.reset_button)
+            self.add_item(self.refresh_button)
+            exists_in_riven = self.riven_id is not None
+            self.prev_button.disabled = self.page == 1
+            self.next_button.disabled = self.page == total_pages
+            self.retry_button.disabled = not exists_in_riven
+            self.reset_button.disabled = not exists_in_riven
+            self.refresh_button.disabled = False  # Always enabled
+
+        elif self.level == "movie":
+            self.add_item(self.add_button)
+            self.add_item(self.remove_button)
+            self.add_item(self.retry_button)
+            self.add_item(self.reset_button)
+            self.add_item(self.refresh_button)
+            exists_in_riven = self.riven_id is not None
+            self.add_button.disabled = exists_in_riven
+            self.remove_button.disabled = not exists_in_riven
+            self.retry_button.disabled = not exists_in_riven
+            self.reset_button.disabled = not exists_in_riven
+            self.refresh_button.disabled = False  # Always enabled
+
+    @button(label="Previous", style=ButtonStyle.grey)
+    async def prev_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this button!", ephemeral=True)
+            return
+        if self.page > 1:
+            self.page -= 1
+            self.update_view()
+            await interaction.response.edit_message(view=self)
+
+    @button(label="Next", style=ButtonStyle.grey)
+    async def next_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this button!", ephemeral=True)
+            return
+        total_pages = math.ceil(len(self.all_results if self.level == "items" else self.seasons if self.level == "show" else self.episodes) / 10)
+        if self.page < total_pages:
+            self.page += 1
+            self.update_view()
+            await interaction.response.edit_message(view=self)
+
+    @button(label="Add", style=ButtonStyle.green)
+    async def add_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this button!", ephemeral=True)
+            return
+        if not self.selected_item or self.level not in ["show", "movie"]:
+            await interaction.response.send_message("Select an item first!", ephemeral=True)
+            return
+        name, _, _, imdb_id, tmdb_id, _, _, _, _, _ = self.selected_item
+        if imdb_id == "N/A":
+            logger.error(f"Attempted to add {name} (TMDB: {tmdb_id}) but IMDb ID is N/A")
+            await interaction.response.send_message("No IMDb ID available!", ephemeral=True)
+            return
+        logger.info(f"Adding {name} with IMDb ID {imdb_id} to Riven")
+        response = query_riven_api("items/add", self.ctx.bot.config, "POST", params={"imdb_ids": imdb_id})
+        if "error" in response:
+            await interaction.response.send_message(f"Failed to add {name}: {response['error']}", ephemeral=True)
+        else:
+            self.riven_id = response.get("ids", [None])[0]
+            self.riven_data = None
+            await interaction.response.send_message(f"Added {name} (IMDb: {imdb_id})", ephemeral=True)
+        self.update_view()
+        await interaction.message.edit(view=self)
+
+    @button(label="Remove", style=ButtonStyle.red)
+    async def remove_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this button!", ephemeral=True)
+            return
+        if not self.selected_item or not self.riven_id or self.level not in ["show", "movie"]:
+            await interaction.response.send_message("Select an item first!", ephemeral=True)
+            return
+        name, _, _, _, tmdb_id, _, _, _, _, _ = self.selected_item
+        response = query_riven_api("items/remove", self.ctx.bot.config, "DELETE", params={"ids": self.riven_id})
+        if "error" in response:
+            await interaction.response.send_message(f"Failed to remove {name}: {response['error']}", ephemeral=True)
+        else:
+            self.riven_id = None
+            self.riven_data = None
+            await interaction.response.send_message(f"Removed {name} (TMDB: {tmdb_id})", ephemeral=True)
+        self.update_view()
+        await interaction.message.edit(view=self)
+
+    @button(label="Retry", style=ButtonStyle.green)
+    async def retry_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this button!", ephemeral=True)
+            return
+        if not self.selected_item or not self.riven_id:
+            await interaction.response.send_message("Select an item first!", ephemeral=True)
+            return
+        name, _, _, _, tmdb_id, _, _, _, _, _ = self.selected_item
+        response = query_riven_api("items/retry", self.ctx.bot.config, "POST", params={"ids": self.riven_id})
+        if "error" in response:
+            await interaction.response.send_message(f"Failed to retry {name}: {response['error']}", ephemeral=True)
+        else:
+            self.riven_data = None
+            await interaction.response.send_message(f"Retrying {name} (TMDB: {tmdb_id})", ephemeral=True)
+        self.update_view()
+        await interaction.message.edit(view=self)
+
+    @button(label="Reset", style=ButtonStyle.blurple)
+    async def reset_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this button!", ephemeral=True)
+            return
+        if not self.selected_item or not self.riven_id:
+            await interaction.response.send_message("Select an item first!", ephemeral=True)
+            return
+        name, _, _, _, tmdb_id, _, _, _, _, _ = self.selected_item
+        response = query_riven_api("items/reset", self.ctx.bot.config, "POST", params={"ids": self.riven_id})
+        if "error" in response:
+            await interaction.response.send_message(f"Failed to reset {name}: {response['error']}", ephemeral=True)
+        else:
+            self.riven_data = None
+            await interaction.response.send_message(f"Reset {name} (TMDB: {tmdb_id})", ephemeral=True)
+        self.update_view()
+        await interaction.message.edit(view=self)
+
+    @button(label="Refresh Info", style=ButtonStyle.grey)
+    async def refresh_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("You are not authorized to interact with this button!", ephemeral=True)
+            return
+        if not self.selected_item:
+            await interaction.response.send_message("Select an item first!", ephemeral=True)
+            return
+        name, year, rating, imdb_id, tmdb_id, poster, description, vote_count, media_type, seasons = self.selected_item
+        riven_response = query_riven_api("items", self.ctx.bot.config, params={"search": name, "limit": 50})
+        riven_state = "Not in Riven"
+        if riven_response.get("success", False) and "items" in riven_response:
+            for item in riven_response["items"]:
+                if item.get("tmdb_id") == str(tmdb_id) or item.get("imdb_id") == imdb_id:
+                    self.riven_id = item.get("id")
+                    riven_state = item.get("state", "Unknown")
+                    break
+        if self.level == "show" or self.level == "movie":
+            media_card = (
+                f"**{name} ({year})**\n"
+                f"⭐ Rating: {rating}/10 ({vote_count} votes)\n"
+                f"📝 {description}\n"
+                f"🖼️ Poster: {poster}\n"
+                f"TMDB: {tmdb_id}\n"
+                f"🔄 Riven Status: {riven_state}"
+            )
+        elif self.level == "episode":
+            season_num, season_name, _ = self.selected_season
+            ep_num, ep_name, ep_desc = self.selected_episode if self.selected_episode else (None, None, None)
+            media_card = (
+                f"**{name} ({year}) - Season {season_num}: {season_name}{' - Episode ' + str(ep_num) + ': ' + ep_name if ep_num else ''}**\n"
+                f"📝 {ep_desc if ep_num else description}\n"
+                f"🖼️ Poster: {poster}\n"
+                f"TMDB: {tmdb_id}\n"
+                f"🔄 Riven Status: {riven_state}"
+            )
+        content = f"🔎 TMDB results for '{self.query}':\n\n{media_card}"
+        if len(content) > 1900:
+            content = content[:1900] + "..."
+        await interaction.response.edit_message(content=content, view=self)
 
 # Get logs
 def get_logs(config):
@@ -389,22 +512,22 @@ def get_services(config):
     services = "\n".join([f"- {service}: {'Enabled' if status else 'Disabled'}" for service, status in data.items()])
     return f"Services:\n{services}"
 
-# Bot setup with custom help command
+# Bot setup
 config = load_config()
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
+intents.dm_messages = True  # Enable DM message handling
 
 class CustomHelpCommand(commands.HelpCommand):
     async def send_bot_help(self, mapping):
         help_text = (
-            "Here’s what I can do for you:\n\n"
-            f"**{self.context.bot.command_prefix}health** - Check if Riven is up and running.\n"
-            f"**{self.context.bot.command_prefix}search {{query}}** - Search TMDB and manage items (add, remove, retry, reset, pause, unpause).\n"
-            f"**{self.context.bot.command_prefix}logs** - View recent Riven logs (up to 1000 characters).\n"
-            f"**{self.context.bot.command_prefix}services** - List Riven’s enabled and disabled services.\n"
-            f"**{self.context.bot.command_prefix}help** - Show this help message.\n\n"
-            "Note: You need to be whitelisted to use these commands!"
+            f"**{self.context.bot.command_prefix}health** - Check if Riven is up.\n"
+            f"**{self.context.bot.command_prefix}search {{query}}** - Search TMDB and manage items.\n"
+            f"**{self.context.bot.command_prefix}logs** - View recent Riven logs.\n"
+            f"**{self.context.bot.command_prefix}services** - List Riven services.\n"
+            f"**{self.context.bot.command_prefix}help** - Show this message.\n"
+            "Note: Whitelist required! Works in channels and DMs."
         )
         await send_response(self.context, help_text)
 
@@ -425,12 +548,11 @@ async def health(ctx):
 
 @bot.command()
 async def search(ctx, *, query=None):
-    """Search TMDB and manage Riven items with interactive buttons."""
     if str(ctx.author) not in config["whitelist"]:
         await send_response(ctx, f"Sorry {ctx.author.mention}, you're not authorized.")
         return
     if not query:
-        await send_response(ctx, "Usage: /search {query}")
+        await send_response(ctx, "Usage: {0}search {{query}}".format(ctx.prefix))
         return
     results = search_tmdb_extended(query, config)
     if isinstance(results, dict) and "error" in results:
@@ -439,7 +561,7 @@ async def search(ctx, *, query=None):
     if not results:
         await send_response(ctx, f"No results found for '{query}'.")
         return
-    view = SearchView(ctx, results)
+    view = SearchView(ctx, results, query)
     await ctx.send(f"🔎 TMDB results for '{query}':", view=view)
 
 @bot.command()
