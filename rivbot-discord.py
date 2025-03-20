@@ -143,32 +143,53 @@ class SearchDropdown(Select):
         self.show_data = show_data
         options = []
         if self.dropdown_type == "items":
-            options = [
-                SelectOption(
-                    label=f"{name} ({year}) - Rating: {rating}/10",
-                    description=f"TMDB: {tmdb_id}",
-                    value=str(idx + (page - 1) * 10),
-                    default=(str(idx + (page - 1) * 10) == selected_value)
-                ) for idx, (name, year, rating, _, tmdb_id, _, _, _, _, _) in enumerate(items)
-            ]
+            for idx, (name, year, rating, _, tmdb_id, _, _, _, _, _) in enumerate(items):
+                # Truncate name to fit within 100 chars with year and rating
+                max_name_length = 100 - len(f" ({year}) - Rating: {rating}/10")
+                truncated_name = name[:max_name_length] if len(name) > max_name_length else name
+                if len(name) > max_name_length:
+                    logger.debug(f"Truncated '{name}' to '{truncated_name}' for TMDB ID: {tmdb_id}")
+                label = f"{truncated_name} ({year}) - Rating: {rating}/10"
+                options.append(
+                    SelectOption(
+                        label=label,
+                        description=f"TMDB: {tmdb_id}",
+                        value=str(idx + (page - 1) * 10),
+                        default=(str(idx + (page - 1) * 10) == selected_value)
+                    )
+                )
         elif self.dropdown_type == "seasons":
-            options = [
-                SelectOption(
-                    label=f"Season {season_num} - {season_name}",
-                    description=f"Episodes: {episode_count}",
-                    value=str(idx + (page - 1) * 10),
-                    default=(str(idx + (page - 1) * 10) == selected_value)
-                ) for idx, (season_num, season_name, episode_count) in enumerate(items)
-            ]
+            for idx, (season_num, season_name, episode_count) in enumerate(items):
+                # Truncate season_name to fit within 100 chars
+                max_name_length = 100 - len(f"Season {season_num} - ")
+                truncated_name = season_name[:max_name_length] if len(season_name) > max_name_length else season_name
+                if len(season_name) > max_name_length:
+                    logger.debug(f"Truncated season '{season_name}' to '{truncated_name}' for Season {season_num}")
+                label = f"Season {season_num} - {truncated_name}"
+                options.append(
+                    SelectOption(
+                        label=label,
+                        description=f"Episodes: {episode_count}",
+                        value=str(idx + (page - 1) * 10),
+                        default=(str(idx + (page - 1) * 10) == selected_value)
+                    )
+                )
         elif self.dropdown_type == "episodes":
-            options = [
-                SelectOption(
-                    label=f"Episode {ep_num} - {ep_name}",
-                    description=ep_desc,
-                    value=str(idx + (page - 1) * 10),
-                    default=(str(idx + (page - 1) * 10) == selected_value)
-                ) for idx, (ep_num, ep_name, ep_desc) in enumerate(items)
-            ]
+            for idx, (ep_num, ep_name, ep_desc) in enumerate(items):
+                # Truncate ep_name to fit within 100 chars
+                max_name_length = 100 - len(f"Episode {ep_num} - ")
+                truncated_name = ep_name[:max_name_length] if len(ep_name) > max_name_length else ep_name
+                if len(ep_name) > max_name_length:
+                    logger.debug(f"Truncated episode '{ep_name}' to '{truncated_name}' for Episode {ep_num}")
+                label = f"Episode {ep_num} - {truncated_name}"
+                options.append(
+                    SelectOption(
+                        label=label,
+                        description=ep_desc,
+                        value=str(idx + (page - 1) * 10),
+                        default=(str(idx + (page - 1) * 10) == selected_value)
+                    )
+                )
         super().__init__(placeholder=f"Select {self.dropdown_type.capitalize()} (Page {page}/{total_pages})", options=options)
 
     async def callback(self, interaction: discord.Interaction):
@@ -242,7 +263,6 @@ class SearchDropdown(Select):
         if len(content) > 1900:
             content = content[:1900] + "..."
         await interaction.response.edit_message(content=content, view=self.view)
-
 # Dynamic View
 class SearchView(View):
     def __init__(self, ctx, all_results, query, page=1):
