@@ -1,70 +1,44 @@
-# Setup Guide for Discord Riven Bot  
+# 🛠 Setup Guide for rivbot-discord  
 
-This guide provides step-by-step instructions to set up and run the Discord Riven Bot.  
+Follow these steps to install and configure the bot.  
 
-## Prerequisites  
+## 📋 Prerequisites  
 
-Before starting, make sure you have the following installed:  
+Before running the bot, ensure you have:  
 
-- **Python 3.8 or higher**: [Download](https://www.python.org/downloads/)  
-- **Git**: [Download](https://git-scm.com/downloads)  
-- **Discord Account**: [Sign up](https://discord.com/register)  
-- **Riven Server**: A running instance with API access. [Riven Docs](#)  
-- **TMDB Account**: For API key. [Sign up](https://www.themoviedb.org/signup)  
-
-## 1. Clone the Repository  
-
-```sh
-git clone https://github.com/subvhome/DiscordRivenBot.git
-cd DiscordRivenBot
-```
-
-## 2. Install Dependencies  
-
-### Optional: Create a Virtual Environment  
-
-```sh
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-# Windows: venv\Scripts\activate
-```
-
-### Install Required Packages  
-
-```sh
-pip install discord.py requests
-```
-
-## 3. Configure the Bot  
-
-### Copy the Example Config  
-
-```sh
-cp config.example.json config.json  # Linux/macOS
-# Windows: copy config.example.json config.json
-```
-
-### Edit `config.json`  
-
-Open `config.json` in a text editor and update the fields (see below).  
-
-## 4. Run the Bot  
-
-Start the bot:  
-
-```sh
-python rivbot-discord.py
-```
-
-### Invite the Bot to Your Server  
-
-Use the `discord_bot_token` to generate an invite URL (see instructions below).  
+- **Python 3.8+** ([Download](https://www.python.org/downloads/))  
+- **Git** ([Download](https://git-scm.com/downloads))  
+- **A Discord Bot Token** (from the [Discord Developer Portal](https://discord.com/developers/applications))  
+- **A Running Riven Server** with API access  
+- **A TMDB API Key** ([Sign up here](https://www.themoviedb.org/signup))  
 
 ---
 
-## Configuration Details  
+## 📥 1. Clone the Repository  
 
-Edit `config.json` with the following fields:  
+```sh
+git clone https://github.com/subvhome/rivbot-discord.git
+cd rivbot-discord
+```
+
+---
+
+## 📦 2. Install Dependencies  
+
+```sh
+pip install -r requirements.txt
+```
+
+---
+
+## ⚙️ 3. Configure the Bot  
+
+1. **Copy the example config file:**  
+   ```sh
+   cp config.example.json config.json  # Linux/macOS
+   # Windows: copy config.example.json config.json
+   ```
+2. **Edit `config.json`** in a text editor and update the required fields:  
 
 ```json
 {
@@ -78,62 +52,43 @@ Edit `config.json` with the following fields:
 }
 ```
 
-### Field Explanations  
-
-- **`riven_api_url`**  
-  - URL of your Riven API.  
-  - Default: `"http://localhost:8080/api/v1"`  
-  - For remote servers: `"http://yourserver:8080/api/v1"`  
-
-- **`riven_api_token`**  
-  - Authentication token from your Riven server.  
-  - Check Riven's admin panel or config files.  
-
-- **`discord_bot_token`**  
-  - Token for your Discord bot.  
-  - **How to get it:**
-    1. Go to [Discord Developer Portal](https://discord.com/developers/applications).  
-    2. Create a new application (e.g., "RivenBot").  
-    3. Go to the **Bot** tab, click **Add Bot**, then **Copy Token**.  
-    4. Enable **Presence Intent**, **Server Members Intent**, and **Message Content Intent**.  
-    5. Under **OAuth2 > URL Generator**:
-       - Scopes: `bot`
-       - Permissions: `Send Messages`, `Read Messages/View Channels`, `Embed Links`, `Attach Files`
-       - Copy the URL and invite the bot to your server.  
-
-- **`whitelist`**  
-  - List of authorized Discord users (format: `username#1234`).  
-  - Example: `["subvhome#1234", "friend#5678"]`  
-
-- **`bot_prefix`**  
-  - Command prefix (e.g., `!health`).  
-  - Default: `"!"`  
-
-- **`tmdb_api_key`**  
-  - API key for TMDB.  
-  - **How to get it:**
-    1. Sign up at [TMDB](https://www.themoviedb.org/).  
-    2. Go to **Settings > API**, request a **v3 key**, and copy it.  
-
-- **`log_to_file`**  
-  - Set to `true` to log output to `bot.log`.  
+### 🔹 How to Get Your Discord Bot Token  
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications).  
+2. Create a new **application** (e.g., "RivenBot").  
+3. Navigate to the **Bot** tab → Click **Add Bot** → **Copy Token**.  
+4. Enable:  
+   - ✅ Presence Intent  
+   - ✅ Server Members Intent  
+   - ✅ Message Content Intent  
+5. Under **OAuth2 > URL Generator**, select:  
+   - **Scopes:** `bot`  
+   - **Permissions:** `Send Messages`, `Read Messages/View Channels`, `Embed Links`, `Attach Files`  
+6. Copy the generated URL and **invite the bot** to your server.  
 
 ---
 
-## Troubleshooting  
+## 🚀 4. Run the Bot  
 
-### Bot not starting?  
-- Check `config.json` for missing or incorrect values.  
+```sh
+python rivbot-discord.py
+```
+
+---
+
+## 🔧 Troubleshooting  
+
+### ❌ Bot not starting?  
+- Check `config.json` for missing values.  
 - Ensure **Python** and dependencies are installed.  
 
-### No response in Discord?  
+### ❌ No response in Discord?  
 - Confirm the bot is **online** and **intents are enabled**.  
-- Verify that the **Riven server is running** and URL is correct.  
+- Verify that the **Riven server URL is correct**.  
 
-### API errors?  
+### ❌ API errors?  
 - Double-check **tokens and API keys**.  
 - Test API URLs in a **browser** or with `curl`.  
 
-### Commands not working?  
-- Ensure your username is in **whitelist**.  
+### ❌ Commands not working?  
+- Ensure your username is in the **whitelist**.  
 - Use the correct **command prefix** (e.g., `!health`).  
