@@ -6,7 +6,7 @@ A Discord bot for managing media items in Riven using TMDB integration, featurin
 
 1. **Clone the Repository**  
    ```sh
-   git clone https://github.com/subvhome/DiscordRivenBot.git
+   git clone https://github.com/subvhome/rivbot.git
    ```
 2. **Install Dependencies**  
    ```sh
@@ -20,7 +20,7 @@ A Discord bot for managing media items in Riven using TMDB integration, featurin
      ```
 4. **Run the Bot**  
    ```sh
-   python rivbot-discord-v2.8.3.py
+   python rivbot-discord.py
    ```
 
 ---
