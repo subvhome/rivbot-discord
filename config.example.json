@@ -4,5 +4,6 @@
     "discord_bot_token": "discord_bot_token",
     "whitelist": ["you_discord_username"],
     "bot_prefix": "!",
-    "tmdb_api_key": "tmdb_api_token"
+    "tmdb_api_key": "tmdb_api_token",
+    "log_to_file": true
 }

@@ -1,2 +1,7 @@
+# .gitignore
 config.json
+bot.log
 venv/
+__pycache__/
+*.pycy
+
