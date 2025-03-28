@@ -252,18 +252,38 @@ class SearchDropdown(Select):
         self.total_pages = total_pages
         self.dropdown_type = dropdown_type
         options = []
+        max_label_length = 100  # Discord label limit
+
         if dropdown_type == "items":
             for idx, (name, year, rating, tmdb_id, media_type) in enumerate(items):
+                # Ensure the label length is within the valid range (1 to 100 characters)
                 label = f"{name[:80]} ({year}) - Rating: {rating}/10"
+                if len(label) < 1:
+                    label = "Invalid Label"  # Fallback if the label is too short
+                elif len(label) > max_label_length:
+                    label = label[:max_label_length]  # Truncate if the label is too long
                 options.append(SelectOption(label=label, description=f"TMDB: {tmdb_id}", value=str(idx + (page - 1) * 10)))
+
         elif dropdown_type == "seasons":
             for idx, (season_num, season_name, episode_count) in enumerate(items):
+                # Ensure the label length is within the valid range (1 to 100 characters)
                 label = f"Season {season_num} - {season_name[:80]}"
+                if len(label) < 1:
+                    label = "Invalid Label"  # Fallback if the label is too short
+                elif len(label) > max_label_length:
+                    label = label[:max_label_length]  # Truncate if the label is too long
                 options.append(SelectOption(label=label, description=f"Episodes: {episode_count}", value=str(idx + (page - 1) * 25)))
+
         elif dropdown_type == "episodes":
             for idx, (ep_num, ep_name, ep_desc) in enumerate(items):
+                # Ensure the label length is within the valid range (1 to 100 characters)
                 label = f"Episode {ep_num} - {ep_name[:80]}"
+                if len(label) < 1:
+                    label = "Invalid Label"  # Fallback if the label is too short
+                elif len(label) > max_label_length:
+                    label = label[:max_label_length]  # Truncate if the label is too long
                 options.append(SelectOption(label=label, description=ep_desc, value=str(idx + (page - 1) * 25)))
+
         super().__init__(placeholder=f"Select {dropdown_type.capitalize()} (Page {page}/{total_pages})", options=options)
         logger.info(f"Created {dropdown_type} dropdown with {len(options)} options")
 
