@@ -1,49 +1,43 @@
-# rivbot-discord  
+# rivbot-discord
 
-A **Discord bot** for managing media items in **Riven** using **TMDB integration**.  
-Features **interactive dropdowns, buttons, and detailed media management commands**.  
+A Discord bot for managing media items in Riven using TMDB integration.
 
-## 📌 Features  
+## Installation
 
-✅ **Search & manage media** with **TMDB integration**  
-✅ **Interactive UI** with **dropdowns** for selecting items, seasons, and episodes  
-✅ **Buttons** for managing media (`Add, Remove, Retry, Reset, Scrape, Magnets, Refresh`)  
-✅ **Embed support** (`!recentlyadded` shows posters)  
-✅ **Whitelist-based access control**  
+### 1. Clone the Repository
 
-## 🚀 Quick Start  
+```
+git clone https://github.com/subvhome/rivbot-discord.git
+cd rivbot-discord
+```
 
-For installation and setup, see **[SETUP.md](SETUP.md)**.  
+### 2. Install Dependencies
 
-1. Clone the repository:  
-   ```sh
-   git clone https://github.com/subvhome/rivbot-discord.git
-   cd rivbot-discord
-   ```
-2. Install dependencies:  
-   ```sh
-   pip install -r requirements.txt
-   ```
-3. Run the bot:  
-   ```sh
-   python rivbot-discord.py
-   ```
+```
+pip install -r requirements.txt
+```
 
-## 🛠 Commands  
+### 3. Run the Bot
 
-- **`!health`** – Check if the Riven server is running.  
-- **`!search <query>`** – Search TMDB for movies/TV shows & manage them.  
-- **`!recentlyadded [n]`** – Show the last `n` items added to Riven (max 10).  
-- **`!status`** – Display Riven stats (`total shows, movies, completed, failed`).  
-- **`!logs`** – View recent logs.  
-- **`!services`** – List Riven services & their statuses.  
-- **`!help`** – Show all available commands.  
+```
+python rivbot-discord.py
+```
 
-## ⚙️ Configuration  
+## 🛠 Commands
 
-Edit `config.json` (see **[SETUP.md](SETUP.md)** for details).  
+- **`!health`** – Check if the Riven server is running.
+- **`!search <query>`** – Search TMDB for movies/TV shows & manage them. Supports year-specific searches (e.g., `!search Pokemon 1997`).
+- **`!recentlyadded [n]`** – Show the last `n` items added to Riven (max 10).
+- **`!status`** – Display Riven stats (total shows, movies, completed, failed).
+- **`!logs`** – View recent logs.
+- **`!services`** – List Riven services & their statuses.
+- **`!help`** – Show all available commands.
 
-```json
+## ⚙️ Configuration
+
+Edit `config.json` (see [SETUP.md](SETUP.md) for details):
+
+```
 {
     "riven_api_url": "http://localhost:8080/api/v1",
     "riven_api_token": "your_riven_api_token_here",
@@ -55,14 +49,14 @@ Edit `config.json` (see **[SETUP.md](SETUP.md)** for details).
 }
 ```
 
-## 🤝 Contributing  
+## 🤝 Contributing
 
-- **Fork** the repository  
-- **Make changes** and submit a **pull request**  
-- Report bugs or suggest features via **GitHub issues**  
+- Fork the repository.
+- Make changes and submit a pull request.
+- Report bugs or suggest features via GitHub issues.
 
-## ⚠️ Notes  
+## ⚠️ Notes
 
-- Requires a **running Riven instance** with API access  
-- Keep **`config.json` private** (excluded via `.gitignore`)  
-- Logs are saved to `bot.log` if `log_to_file` is enabled  
+- Requires a running Riven instance with API access.
+- Keep `config.json` private (excluded via `.gitignore`).
+- Logs are saved to `bot.log` if `log_to_file` is enabled.

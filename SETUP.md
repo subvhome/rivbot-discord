@@ -25,8 +25,17 @@ cd rivbot-discord
 
 ## 📦 2. Install Dependencies  
 
+- Ensure **Python 3.8+** is installed.
+- Install required dependencies:
+  
 ```sh
 pip install -r requirements.txt
+```
+
+- Verify installation:
+
+```sh
+pip list
 ```
 
 ---
@@ -52,18 +61,36 @@ pip install -r requirements.txt
 }
 ```
 
-### 🔹 How to Get Your Discord Bot Token  
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications).  
-2. Create a new **application** (e.g., "RivenBot").  
-3. Navigate to the **Bot** tab → Click **Add Bot** → **Copy Token**.  
-4. Enable:  
-   - ✅ Presence Intent  
-   - ✅ Server Members Intent  
-   - ✅ Message Content Intent  
-5. Under **OAuth2 > URL Generator**, select:  
-   - **Scopes:** `bot`  
-   - **Permissions:** `Send Messages`, `Read Messages/View Channels`, `Embed Links`, `Attach Files`  
-6. Copy the generated URL and **invite the bot** to your server.  
+---
+
+## 🛸 Discord Bot Setup Instructions  
+
+To configure the bot on Discord:
+
+1. **Create a New Application:**
+   - Go to the [Discord Developer Portal](https://discord.com/developers/applications).
+   - Click **New Application**, name it (e.g., "RivenBot"), and save.
+
+2. **Generate a Bot Token:**
+   - Navigate to the **Bot** tab, click **Add Bot**, then **Reset Token** to generate a token.
+   - Copy the token and keep it secure (paste it into `config.json`).
+
+3. **Configure Intents:**
+   - In the **Bot** tab, enable:
+     - **Presence Intent**
+     - **Server Members Intent**
+     - **Message Content Intent**
+
+4. **Invite the Bot:**
+   - Go to **OAuth2 > URL Generator**.
+   - Select **Scopes:** `bot`.
+   - Select **Permissions:** `Send Messages`, `Read Messages/View Channels`, `Embed Links`, `Attach Files`, `Add Reactions`.
+   - Copy the URL, open it in a browser, and invite the bot to your server.
+
+5. **Assign Roles:**
+   - In your Discord server, go to **Server Settings > Roles**.
+   - Create a role for the bot with the above permissions (or higher).
+   - Assign this role to your bot.
 
 ---
 
@@ -92,3 +119,5 @@ python rivbot-discord.py
 ### ❌ Commands not working?  
 - Ensure your username is in the **whitelist**.  
 - Use the correct **command prefix** (e.g., `!health`).  
+
+---
