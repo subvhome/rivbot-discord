@@ -3,13 +3,16 @@ import requests
 import discord
 from discord.ext import commands
 import logging
+from datetime import datetime, timedelta
 import asyncio
+import io
 from io import StringIO
 from discord.ui import Select, View, Button
 from discord.ui.button import ButtonStyle
 from discord import SelectOption
 import math
 import re
+from PIL import Image, ImageOps
 
 # SECTION 1 - Setup logging with detailed output
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -652,7 +655,67 @@ class SearchView(View):
             await message.add_reaction(emoji)
             logger.info(f"Added reaction {emoji} to refreshed message {message.id}")
 
-# SECTION 15 - Bot setup
+#SECTION 15 - Latest Release Dropdown Class
+class LatestReleasesDropdown(Select):
+    def __init__(self, items):
+        options = []
+        # items is a list of tuples: (title, year, tmdb_id, media_type, added_date)
+        for idx, (title, year, tmdb_id, media_type, added_date) in enumerate(items):
+            # Build a label with the title and year; include the added date in the description.
+            label = f"{title[:80]} ({year})"
+            description = f"Added: {added_date}"
+            options.append(SelectOption(label=label, description=description, value=str(idx)))
+        super().__init__(placeholder="Select a release", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        # Check if the interaction user is authorized (reusing your existing check_authorization function)
+        if not await check_authorization(interaction, self.view.initiator_id):
+            return
+
+        selected_idx = int(self.values[0])
+        selected_item = self.view.recent_items[selected_idx]  # Tuple: (title, year, tmdb_id, media_type, added_date)
+        title, year, tmdb_id, media_type, added_date = selected_item
+
+        # Fetch detailed info from TMDb using your existing helper function.
+        details = fetch_tmdb_by_id(tmdb_id, media_type, self.view.ctx.bot.config)
+        if details:
+            # Unpack TMDb details: (name, year, rating, imdb_id, tmdb_id, poster, description, vote_count, media_type, seasons)
+            name, year, rating, imdb_id, tmdb_id, poster, description, vote_count, media_type, seasons = details
+            imdb_link = f"https://www.imdb.com/title/{imdb_id}/" if imdb_id != "N/A" else "N/A"
+            # Here you may want to adjust how you construct the Trakt link if you store a slug; for now, we use tmdb_id
+            trakt_link = f"https://trakt.tv/{media_type}s/{tmdb_id}"
+            embed = discord.Embed(
+                title=f"{name} ({year})",
+                description=(
+                    f"**Rating:** {rating}/10 ({vote_count} votes)\n"
+                    f"**Added on Trakt:** {added_date}\n"
+                    f"**Description:** {description}"
+                ),
+                color=discord.Color.green() if media_type == "movie" else discord.Color.purple()
+            )
+            # Use a large image (title card) instead of a thumbnail.
+            if poster and poster != "No poster":
+                embed.set_image(url=poster)
+            embed.add_field(name="IMDb", value=f"[View on IMDb]({imdb_link})", inline=True)
+            embed.add_field(name="Trakt", value=f"[View on Trakt]({trakt_link})", inline=True)
+
+            # OPTIONAL: Add buttons based on Riven status by editing the view here.
+            await interaction.response.edit_message(embed=embed, view=self.view)
+        else:
+            await interaction.response.send_message("Failed to fetch details.", ephemeral=True)
+
+class LatestReleasesView(View):
+    def __init__(self, ctx, recent_items):
+        super().__init__(timeout=300)
+        self.ctx = ctx
+        self.recent_items = recent_items
+        self.initiator_id = ctx.author.id
+        # Add the select menu to the view.
+        self.add_item(LatestReleasesDropdown(recent_items))
+        # OPTIONAL: Here you can add additional buttons (e.g., Add/Remove) based on Riven availability.
+
+
+# SECTION 16 - Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
@@ -733,6 +796,131 @@ async def on_raw_reaction_add(payload):
                 for emoji in reaction_emojis[:len(view.recommended_ids)]:
                     await message.add_reaction(emoji)
                     logger.info(f"Re-added reaction {emoji} to message {message.id}")
+
+@bot.command(name="latestreleases")
+async def latest_releases(ctx):
+    """Fetch the latest N releases from Trakt, stitch their posters into a grid, and display with an interactive select menu."""
+    await ctx.defer()
+
+    trakt_api_key = config.get("trakt_api_key")
+    tmdb_api_key = config.get("tmdb_api_key")
+    latest_count = config.get("latest_releases_count", 10)  # Adjustable count from config
+
+    if not trakt_api_key or not tmdb_api_key:
+        await ctx.send("API keys for Trakt or TMDb are missing from the config.")
+        return
+
+    trakt_url = "https://api.trakt.tv/users/garycrawfordgc/lists/latest-releases/items"
+    headers = {
+        "Content-Type": "application/json",
+        "trakt-api-version": "2",
+        "trakt-api-key": trakt_api_key
+    }
+
+    try:
+        response = requests.get(trakt_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        items = response.json()
+
+        results = []       # For the SearchView dropdown: (title, year, rating, tmdb_id, media_type)
+        poster_info = []   # For building the poster grid: dict with keys "title" and "poster_url"
+
+        for item in items[:latest_count]:
+            media_type = item.get("type")
+            if media_type == "movie":
+                media = item.get("movie", {})
+            elif media_type == "show":
+                media = item.get("show", {})
+            else:
+                continue
+
+            title = media.get("title", "Unknown")
+            year = media.get("year", "Unknown")
+            tmdb_id = media.get("ids", {}).get("tmdb")
+            rating = "N/A"   # Default rating
+            poster_url = None
+
+            if tmdb_id:
+                tmdb_url = f"https://api.themoviedb.org/3/{'tv' if media_type=='show' else 'movie'}/{tmdb_id}"
+                tmdb_params = {"api_key": tmdb_api_key}
+                tmdb_response = requests.get(tmdb_url, params=tmdb_params, timeout=10)
+                if tmdb_response.status_code == 200:
+                    tmdb_data = tmdb_response.json()
+                    rating = tmdb_data.get("vote_average", "N/A")
+                    poster_path = tmdb_data.get("poster_path")
+                    if poster_path:
+                        poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+            
+            logger.info(f"Fetched: {title} ({year}) with rating: {rating}")
+            results.append((title, year, rating, tmdb_id, media_type))
+            poster_info.append({"title": title, "poster_url": poster_url})
+
+        if not results:
+            await ctx.send(f"No new releases found in the latest {latest_count} entries.")
+            return
+
+        # Create the poster grid image with dynamic grid width.
+        grid_image = await create_poster_grid(poster_info, max_grid_width=MAX_GRID_WIDTH, image_size=(200, 300))
+        image_buffer = io.BytesIO()
+        grid_image.save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+
+        # Create an embed with the grid image attached.
+        embed = discord.Embed(title=f"Latest {latest_count} Releases", color=discord.Color.blue())
+        embed.set_image(url="attachment://poster_grid.png")
+
+        # Create the interactive view using your existing SearchView.
+        view = SearchView(ctx, results, query=f"Latest {latest_count} Releases")
+        
+        # Send the embed with the attached grid image and the view (select menu and buttons).
+        await ctx.send(embed=embed, file=discord.File(fp=image_buffer, filename="poster_grid.png"), view=view)
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching latest releases from Trakt: {e}")
+        await ctx.send("Failed to retrieve latest releases. Please try again later.")
+
+async def create_poster_grid(poster_info, max_grid_width=1024, image_size=(200,300)):
+    """
+    Given a list of dictionaries with 'title' and 'poster_url', create a grid image of poster images.
+    The grid's width is set to max_grid_width, and the number of columns is computed based on image_size.
+    The grid grows vertically as needed.
+    """
+    posters = []
+    placeholder = Image.new("RGB", image_size, color=(50, 50, 50))  # Dark grey placeholder
+
+    for info in poster_info:
+        url = info.get("poster_url")
+        if url:
+            try:
+                r = requests.get(url, timeout=10)
+                if r.status_code == 200:
+                    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+                    img = ImageOps.fit(img, image_size, Image.LANCZOS)
+                    posters.append(img)
+                else:
+                    posters.append(placeholder)
+            except Exception as e:
+                logging.error(f"Error fetching poster from {url}: {e}")
+                posters.append(placeholder)
+        else:
+            posters.append(placeholder)
+
+    total = len(posters)
+    # Calculate the number of columns so that the grid width is as wide as possible up to max_grid_width.
+    columns = max(1, min(total, max_grid_width // image_size[0]))
+    grid_rows = math.ceil(total / columns)
+    grid_width = columns * image_size[0]
+    grid_height = grid_rows * image_size[1]
+    grid = Image.new("RGB", (grid_width, grid_height), color=(0, 0, 0))
+
+    for index, poster in enumerate(posters):
+        row = index // columns
+        col = index % columns
+        x = col * image_size[0]
+        y = row * image_size[1]
+        grid.paste(poster, (x, y))
+
+    return grid
 
 @bot.command()
 async def health(ctx):
