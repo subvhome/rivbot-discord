@@ -799,16 +799,34 @@ async def on_raw_reaction_add(payload):
 
 @bot.command(name="latestreleases")
 async def latest_releases(ctx):
-    """Fetch the latest N releases from Trakt, stitch their posters into a grid, and display with an interactive select menu."""
+    """Fetch the latest N releases from Trakt, create a full-width poster grid image, and send it as a file with an attached select menu.
+    
+    All required configuration keys must be present in config.json.
+    The message will consist solely of the image attachment and the select menu.
+    """
     await ctx.defer()
 
-    trakt_api_key = config.get("trakt_api_key")
-    tmdb_api_key = config.get("tmdb_api_key")
-    latest_count = config.get("latest_releases_count", 10)  # Adjustable count from config
+    # REQUIRED CONFIG KEYS – must exist in config.json (no defaults)
+    required_keys = [
+        "trakt_api_key",
+        "tmdb_api_key",
+        "latest_releases_count",
+        "max_grid_width",
+        "poster_image_width",
+        "poster_image_height"
+    ]
+    for key in required_keys:
+        if key not in config:
+            await ctx.send(f"Error: Missing required config key: `{key}`")
+            return
 
-    if not trakt_api_key or not tmdb_api_key:
-        await ctx.send("API keys for Trakt or TMDb are missing from the config.")
-        return
+    # Load required config values.
+    trakt_api_key = config["trakt_api_key"]
+    tmdb_api_key = config["tmdb_api_key"]
+    latest_count = config["latest_releases_count"]
+    max_grid_width = config["max_grid_width"]
+    poster_width = config["poster_image_width"]
+    poster_height = config["poster_image_height"]
 
     trakt_url = "https://api.trakt.tv/users/garycrawfordgc/lists/latest-releases/items"
     headers = {
@@ -822,7 +840,7 @@ async def latest_releases(ctx):
         response.raise_for_status()
         items = response.json()
 
-        results = []       # For the SearchView dropdown: (title, year, rating, tmdb_id, media_type)
+        results = []       # For the select menu: (title, year, rating, tmdb_id, media_type)
         poster_info = []   # For building the poster grid: dict with keys "title" and "poster_url"
 
         for item in items[:latest_count]:
@@ -859,31 +877,37 @@ async def latest_releases(ctx):
             await ctx.send(f"No new releases found in the latest {latest_count} entries.")
             return
 
-        # Create the poster grid image with dynamic grid width.
-        grid_image = await create_poster_grid(poster_info, max_grid_width=MAX_GRID_WIDTH, image_size=(200, 300))
+        # Create the poster grid image.
+        grid_image = await create_poster_grid(poster_info, max_grid_width=max_grid_width, image_size=(poster_width, poster_height))
         image_buffer = io.BytesIO()
         grid_image.save(image_buffer, format="PNG")
         image_buffer.seek(0)
 
-        # Create an embed with the grid image attached.
-        embed = discord.Embed(title=f"Latest {latest_count} Releases", color=discord.Color.blue())
-        embed.set_image(url="attachment://poster_grid.png")
-
-        # Create the interactive view using your existing SearchView.
+        # Create the select menu view (using your existing SearchView).
         view = SearchView(ctx, results, query=f"Latest {latest_count} Releases")
-        
-        # Send the embed with the attached grid image and the view (select menu and buttons).
-        await ctx.send(embed=embed, file=discord.File(fp=image_buffer, filename="poster_grid.png"), view=view)
+
+        # Send the file attachment with the view and no embed.
+        # This should display the full image preview in Discord.
+        await ctx.send(file=discord.File(fp=image_buffer, filename="poster_grid.png"), view=view)
 
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching latest releases from Trakt: {e}")
+        logger.error(f"Error fetching latest releases from Trakt: {e}")
         await ctx.send("Failed to retrieve latest releases. Please try again later.")
 
-async def create_poster_grid(poster_info, max_grid_width=1024, image_size=(200,300)):
+
+async def create_poster_grid(poster_info, max_grid_width, image_size):
     """
-    Given a list of dictionaries with 'title' and 'poster_url', create a grid image of poster images.
-    The grid's width is set to max_grid_width, and the number of columns is computed based on image_size.
-    The grid grows vertically as needed.
+    Create a poster grid image.
+    
+    Parameters:
+      poster_info (list): List of dicts with 'title' and 'poster_url'.
+      max_grid_width (int): Maximum width in pixels for the final grid.
+      image_size (tuple): (width, height) for each poster.
+      
+    The grid is built by:
+      - Scaling each poster to exactly image_size.
+      - Calculating the number of columns as max_grid_width // image_size[0].
+      - Arranging posters row by row.
     """
     posters = []
     placeholder = Image.new("RGB", image_size, color=(50, 50, 50))  # Dark grey placeholder
@@ -900,17 +924,18 @@ async def create_poster_grid(poster_info, max_grid_width=1024, image_size=(200,3
                 else:
                     posters.append(placeholder)
             except Exception as e:
-                logging.error(f"Error fetching poster from {url}: {e}")
+                logger.error(f"Error fetching poster from {url}: {e}")
                 posters.append(placeholder)
         else:
             posters.append(placeholder)
 
     total = len(posters)
-    # Calculate the number of columns so that the grid width is as wide as possible up to max_grid_width.
-    columns = max(1, min(total, max_grid_width // image_size[0]))
-    grid_rows = math.ceil(total / columns)
+    columns = max_grid_width // image_size[0]
+    if columns < 1:
+        columns = 1
+    rows = math.ceil(total / columns)
     grid_width = columns * image_size[0]
-    grid_height = grid_rows * image_size[1]
+    grid_height = rows * image_size[1]
     grid = Image.new("RGB", (grid_width, grid_height), color=(0, 0, 0))
 
     for index, poster in enumerate(posters):
