@@ -16,33 +16,40 @@ Before running the bot, ensure you have:
 ---
 
 ## 📥 1. Clone the Repository  
-``
+
+```
 git clone https://github.com/subvhome/rivbot-discord.git  
 cd rivbot-discord  
-``
+```
+
 ---
 
 ## 📦 2. Install Dependencies  
 
 - Ensure Python 3.8+ is installed.  
 - Install required dependencies:  
-``
+
+```
 pip install -r requirements.txt  
-``
+```
+
 - Verify installation:  
-``
+
+```
 pip list  
-``
+```
+
 ---
 
 ## ⚙️ 3. Configure the Bot  
 
 1. Copy the example config file:  
-   ``cp config.example.json config.json  # Linux/macOS  
-   # Windows: copy config.example.json config.json  ``
+   `cp config.example.json config.json`  # Linux/macOS  
+   `copy config.example.json config.json` # Windows 
 
 2. Edit config.json in a text editor and update the required fields:  
-``
+
+```
 {
     "riven_api_url": "http://localhost:8080/api/v1",
     "riven_api_token": "riven_api_token",
@@ -58,7 +65,8 @@ pip list
     "poster_image_width": 150,
     "poster_image_height": 220
 }
-``
+```
+
 ### Poster Grid Settings  
 - latest_releases_count: Number of latest releases to fetch from Trakt.  
 - max_grid_width: The maximum width for the poster grid image.  
@@ -99,9 +107,11 @@ To configure the bot on Discord:
 ---
 
 ## 🚀 4. Run the Bot  
-``
+
+```
 python rivbot-discord.py  
-``
+```
+
 ---
 
 ## 🔧 Troubleshooting  
