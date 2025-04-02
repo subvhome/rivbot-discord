@@ -6,17 +6,18 @@ A Discord bot for managing and discovering media items in Riven with TMDB integr
 
 ### 1. Clone the Repository
 
+``
 git clone https://github.com/subvhome/rivbot-discord.git
 cd rivbot-discord
-
+``
 ### 2. Install Dependencies
-
+``
 pip install -r requirements.txt
-
+``
 ### 3. Configure the Bot
 
 Edit the config.json file with your API keys and settings. For example:
-
+``
 {
     "riven_api_url": "http://localhost:8080/api/v1",
     "riven_api_token": "riven_api_token",
@@ -32,11 +33,11 @@ Edit the config.json file with your API keys and settings. For example:
     "poster_image_width": 150,
     "poster_image_height": 220
 }
-
+``
 ### 4. Run the Bot
-
+``
 python rivbot-discord.py
-
+``
 ## 🛠 Commands
 
 - **!health** – Check if the Riven server is running.
