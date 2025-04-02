@@ -799,7 +799,7 @@ async def on_raw_reaction_add(payload):
 
 @bot.command(name="latestreleases")
 async def latest_releases(ctx):
-    """Fetch the latest N releases from Trakt, create a full-width poster grid image, and send it as a file with an attached select menu.
+    """Fetch the latest releases from Trakt, create a full-width poster grid image, and send it as a file with an attached select menu.
     
     All required configuration keys must be present in config.json.
     The message will consist solely of the image attachment and the select menu.

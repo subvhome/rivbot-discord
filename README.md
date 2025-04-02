@@ -1,62 +1,68 @@
 # rivbot-discord
 
-A Discord bot for managing media items in Riven using TMDB integration.
+A Discord bot for managing and discovering media items in Riven with TMDB integration. It allows users to search for new content and manage existing media directly from Discord.
 
 ## Installation
 
 ### 1. Clone the Repository
 
-```
 git clone https://github.com/subvhome/rivbot-discord.git
 cd rivbot-discord
-```
 
 ### 2. Install Dependencies
 
-```
 pip install -r requirements.txt
-```
 
-### 3. Run the Bot
+### 3. Configure the Bot
 
-```
+Edit the config.json file with your API keys and settings. For example:
+
+{
+    "riven_api_url": "http://localhost:8080/api/v1",
+    "riven_api_token": "riven_api_token",
+    "discord_bot_token": "discord_bot_token",
+    "whitelist": ["you_discord_username" , "username2"],
+    "bot_prefix": "!",
+    "tmdb_api_key": "tmdb_api_token",
+    "log_to_file": true,
+    "trakt_api_key": "keyplaceholder",
+    "latest_releases_count": 4,
+    "max_grid_width": 300,
+    "poster_grid_columns": 2,
+    "poster_image_width": 150,
+    "poster_image_height": 220
+}
+
+### 4. Run the Bot
+
 python rivbot-discord.py
-```
 
 ## 🛠 Commands
 
-- **`!health`** – Check if the Riven server is running.
-- **`!search <query>`** – Search TMDB for movies/TV shows & manage them. Supports year-specific searches (e.g., `!search Pokemon 1997`).
-- **`!recentlyadded [n]`** – Show the last `n` items added to Riven (max 10).
-- **`!status`** – Display Riven stats (total shows, movies, completed, failed).
-- **`!logs`** – View recent logs.
-- **`!services`** – List Riven services & their statuses.
-- **`!help`** – Show all available commands.
+- **!health** – Check if the Riven server is running.
+- **!search <query>** – Search TMDB for movies/TV shows. Supports year-specific searches (e.g., !search Pokemon 1997).
+- **!recentlyadded [n]** – Show the last n items added to Riven (max 10).
+- **!status** – Display Riven stats (total shows, movies, completed, failed).
+- **!logs** – View recent logs. [WIP]
+- **!services** – List Riven services and their statuses.
+- **!latestreleases** – Fetch the latest releases from Trakt, build a poster grid image of all titles, and display a select menu for managing them.  
+- **!help** – Show all available commands.
 
 ## ⚙️ Configuration
 
-Edit `config.json` (see [SETUP.md](SETUP.md) for details):
-
-```
-{
-    "riven_api_url": "http://localhost:8080/api/v1",
-    "riven_api_token": "your_riven_api_token_here",
-    "discord_bot_token": "your_discord_bot_token_here",
-    "whitelist": ["your_discord_username#1234"],
-    "bot_prefix": "!",
-    "tmdb_api_key": "your_tmdb_api_key_here",
-    "log_to_file": true
-}
-```
+All configuration settings (API keys, release count, grid dimensions, etc.) are set in config.json. See the sample above for the required keys.
 
 ## 🤝 Contributing
 
 - Fork the repository.
-- Make changes and submit a pull request.
+- Make your changes and submit a pull request.
 - Report bugs or suggest features via GitHub issues.
 
 ## ⚠️ Notes
 
 - Requires a running Riven instance with API access.
-- Keep `config.json` private (excluded via `.gitignore`).
-- Logs are saved to `bot.log` if `log_to_file` is enabled.
+- The bot integrates with TMDB for media discovery and manages content on Riven.
+- The !latestreleases command sends a full-width image (as a file attachment) of poster grids along with an interactive select menu.
+- Keep config.json private (ensure it’s excluded via .gitignore).
+- Logs are saved to bot.log if log_to_file is enabled.
+- Scrape and Magnet buttons are not functional yet. Should be in a new release
