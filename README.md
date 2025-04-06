@@ -48,7 +48,7 @@ python rivbot-discord.py
 ## 🛠 Commands
 
 - **!health** – Check if the Riven server is running.
-- **!search <query>** – Search TMDB for movies/TV shows. Supports year-specific searches (e.g., !search Pokemon 1997).
+- **!search <query>** – Search TMDB for movies/TV shows. Supports year-specific searches (e.g., !search Pokemon 1997). Fully supported film scraping. Series scraping is in the works
 - **!recentlyadded [n]** – Show the last n items added to Riven (max 10).
 - **!status** – Display Riven stats (total shows, movies, completed, failed).
 - **!logs** – View recent logs. [WIP]

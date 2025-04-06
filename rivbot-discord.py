@@ -13,6 +13,7 @@ from discord import SelectOption
 import math
 import re
 from PIL import Image, ImageOps
+from concurrent.futures import ThreadPoolExecutor
 
 # SECTION 1 - Setup logging with detailed output
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -310,9 +311,10 @@ class SearchDropdown(Select):
                 riven_response = query_riven_api("items", self.view.ctx.bot.config, params={"search": name, "limit": 50})
                 exists_in_riven = False
                 riven_id = None
-                riven_state = "Not in Riven"
+                riven_state = "Not in Riven"  # Add this line
                 if riven_response.get("success", False) and "items" in riven_response:
                     for item in riven_response["items"]:
+                        logger.info(f"Comparing TMDB: {item.get('tmdb_id')} vs {str(tmdb_id)}, IMDb: {item.get('imdb_id')} vs {imdb_id}")
                         if item.get("tmdb_id") == str(tmdb_id) or item.get("imdb_id") == imdb_id:
                             exists_in_riven = True
                             riven_id = item.get("id")
@@ -331,6 +333,7 @@ class SearchDropdown(Select):
                 self.view.recommended_ids = [item['id'] for item in recommended_data]
                 embed = create_media_embed(self.view.query, name, year, rating, vote_count, description, imdb_id, tmdb_id, poster, riven_state, recommended_titles)
                 await interaction.response.edit_message(embed=embed, view=self.view)
+                # ... (rest of the code)
                 message = await interaction.original_response()
                 bot.active_recommended_messages[message.id] = self.view
                 reaction_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
@@ -511,7 +514,7 @@ class SearchView(View):
         self.add_item(self.refresh_button)
         self.retry_button.disabled = not exists_in_riven
         self.reset_button.disabled = not exists_in_riven
-        if self.level == "movie":
+        if self.level in ["movie", "show"]:  # Updated to include both "movie" and "show"
             self.add_item(self.scrape_button)
             self.add_item(self.magnets_button)
             self.scrape_button.disabled = not exists_in_riven
@@ -605,13 +608,361 @@ class SearchView(View):
     async def scrape_button_callback(self, interaction: discord.Interaction):
         if not await check_authorization(interaction, self.initiator_id):
             return
-        name, _, _, imdb_id, tmdb_id, _, _, _, _, _ = self.selected_item
-        logger.info(f"{interaction.user} scraping {name}")
-        response, error = handle_api_response(query_riven_api(f"items/{self.riven_id}/scrape", self.ctx.bot.config, "POST"))
-        if error:
-            await interaction.response.send_message(f"Scrape failed: {error}", ephemeral=True)
-        else:
-            await interaction.response.send_message("Scraping started", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+
+        if not self.riven_id:
+            await interaction.followup.send("Scrape unavailable: Title not in Riven.", ephemeral=True)
+            return
+
+        name, _, _, imdb_id, tmdb_id, poster, description, vote_count, media_type, seasons = self.selected_item
+        logger.info(f"{interaction.user} initiating scrape for {name}")
+
+        riven_url = self.ctx.bot.config.get("riven_api_url")
+        riven_api_token = self.ctx.bot.config.get("riven_api_token")
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': f'Bearer {riven_api_token}',
+            'Content-Type': 'application/json'  # Added globally since most POST requests need it
+        }
+
+        # Send initial "Please wait" message
+        wait_message = await interaction.followup.send("Please wait, streams are being prepared.", ephemeral=True)
+
+        # Define the dot animation task
+        async def animate_dots(message):
+            dots = ["", ".", "..", "..."]
+            i = 0
+            while True:
+                try:
+                    new_content = f"Please wait, streams are being prepared{dots[i]}"
+                    await message.edit(content=new_content)
+                    i = (i + 1) % 4
+                    await asyncio.sleep(0.5)
+                except asyncio.CancelledError:
+                    break
+
+        # Start the animation in the background
+        animation_task = asyncio.create_task(animate_dots(wait_message))
+
+        try:
+            # **Step 1: Fetch Streams**
+            streams_url = f"{riven_url}/scrape/scrape/{self.riven_id}"
+            logger.debug(f"[Fetch Streams] URL: {streams_url}")
+
+            def fetch_streams_sync():
+                return requests.get(streams_url, headers=headers, verify=False)
+
+            with ThreadPoolExecutor() as executor:
+                loop = asyncio.get_running_loop()
+                streams_response = await loop.run_in_executor(executor, fetch_streams_sync)
+
+            logger.debug(f"[Fetch Streams] Status: {streams_response.status_code}")
+            logger.debug(f"[Fetch Streams] Body: {streams_response.text}")
+
+            if streams_response.status_code != 200:
+                await wait_message.edit(content="Failed to fetch streams.")
+                animation_task.cancel()
+                return
+
+            data = streams_response.json()
+            if "streams" not in data or not data["streams"]:
+                await wait_message.edit(content="No streams found for this item.")
+                animation_task.cancel()
+                return
+
+            self.streams = []
+            for infohash, stream in data["streams"].items():
+                stream["riven_id"] = self.riven_id
+                stream["infohash"] = infohash
+                self.streams.append(stream)
+            logger.info(f"[Fetch Streams] Found {len(self.streams)} streams for {name}")
+
+            # **Step 2: Build and Send Stream Select Menu**
+            options = []
+            for s in self.streams:
+                title = s.get("parsed_title") or s.get("raw_title") or "Unknown"
+                title = title[:40]
+                parsed = s.get("parsed_data", {})
+                year_val = parsed.get("year", "N/A")
+                resolution = parsed.get("resolution", "N/A")
+                codec = parsed.get("codec", "N/A")
+                audio = "/".join(parsed.get("audio", [])) if parsed.get("audio") else "N/A"
+                channels = "/".join(parsed.get("channels", [])) if parsed.get("channels") else "N/A"
+                languages = " ".join(parsed.get("languages", [])) if parsed.get("languages") else "N/A"
+                label = f"{title} {year_val} {resolution} {codec} {audio} {channels} {languages}"
+                options.append(discord.SelectOption(label=label[:100], value=s["infohash"]))
+            logger.info(f"[Stream Menu] Created {len(options)} stream options.")
+
+            stream_menu = discord.ui.Select(placeholder="Select a stream", options=options)
+
+            async def on_stream_select(select_int: discord.Interaction):
+                await select_int.response.defer(ephemeral=True)
+                selected_hash = stream_menu.values[0]
+                logger.info(f"[Stream Select] {select_int.user} selected stream with infohash: {selected_hash}")
+
+                # Step 3: Start Session
+                start_url = f"{riven_url}/scrape/scrape/start_session?item_id={self.riven_id}&magnet={selected_hash}"
+                logger.debug(f"[Start Session] URL: {start_url}")
+                try:
+                    start_resp = requests.post(start_url, headers=headers, verify=False)
+                    logger.debug(f"[Start Session] Status: {start_resp.status_code}")
+                    logger.debug(f"[Start Session] Body: {start_resp.text}")
+                except Exception as e:
+                    logger.error(f"[Start Session] Exception: {e}")
+                    await select_int.followup.send(f"Error starting session: {e}", ephemeral=True)
+                    return
+
+                if start_resp.status_code != 200:
+                    try:
+                        detail = start_resp.json().get("detail", "No detail provided")
+                    except Exception:
+                        detail = "Failed to parse response"
+                    logger.error(f"[Start Session] Failed: {detail}")
+                    await select_int.followup.send(f"Start session failed: {detail}", ephemeral=True)
+                    return
+
+                session_data = start_resp.json()
+                session_id = session_data.get("session_id")
+                if not session_id:
+                    await select_int.followup.send("Failed to start session: No session ID returned.", ephemeral=True)
+                    return
+                logger.info(f"[Start Session] Started session with session_id: {session_id}")
+
+                # Check cache status (assuming torrent_info has a 'cached' field; adjust if different)
+                torrent_info = session_data.get("torrent_info", {})
+                is_cached = torrent_info.get("cached", True)  # Default to True if not present; adjust based on your API
+                if not is_cached:
+                    await select_int.followup.send("Torrent is not cached, please try another stream.", ephemeral=True)
+                    # Rebuild stream menu
+                    retry_options = []
+                    for s in self.streams:
+                        title = s.get("parsed_title") or s.get("raw_title") or "Unknown"
+                        title = title[:40]
+                        parsed = s.get("parsed_data", {})
+                        year_val = parsed.get("year", "N/A")
+                        resolution = parsed.get("resolution", "N/A")
+                        codec = parsed.get("codec", "N/A")
+                        audio = "/".join(parsed.get("audio", [])) if parsed.get("audio") else "N/A"
+                        channels = "/".join(parsed.get("channels", [])) if parsed.get("channels") else "N/A"
+                        languages = " ".join(parsed.get("languages", [])) if parsed.get("languages") else "N/A"
+                        label = f"{title} {year_val} {resolution} {codec} {audio} {channels} {languages}"
+                        retry_options.append(discord.SelectOption(label=label[:100], value=s["infohash"]))
+                    retry_stream_menu = discord.ui.Select(placeholder="Select another stream", options=retry_options[:25])  # Limit to 25
+                    retry_stream_menu.callback = on_stream_select  # Recursive callback
+                    retry_view = discord.ui.View()
+                    retry_view.add_item(retry_stream_menu)
+                    await select_int.followup.send("Choose another stream:", view=retry_view, ephemeral=True)
+                    return
+
+                files_dict = torrent_info.get("files", {})
+                logger.info(f"[Start Session] Torrent returned {len(files_dict)} file(s).")
+
+                if not files_dict:
+                    await select_int.followup.send("No files found in this stream.", ephemeral=True)
+                    return
+
+                if media_type == "series":
+                    # TV Show Logic: Upload text file and provide confirmation dropdown
+                    file_list = [file_data["filename"] for file_data in files_dict.values()]
+                    file_list_text = "\n".join(file_list)
+                    file_list_io = io.StringIO(file_list_text)
+                    episode_file = discord.File(file_list_io, filename="episodes.txt")
+
+                    # Confirmation dropdown
+                    confirm_options = [
+                        discord.SelectOption(label="Confirm All Episodes", value="confirm"),
+                        discord.SelectOption(label="Cancel", value="cancel")
+                    ]
+                    confirm_menu = discord.ui.Select(placeholder="Confirm processing all episodes", options=confirm_options)
+
+                    async def on_confirm_select(confirm_int: discord.Interaction):
+                        await confirm_int.response.defer(ephemeral=True)
+                        selected_value = confirm_menu.values[0]
+
+                        if selected_value == "cancel":
+                            await confirm_int.followup.send("Operation cancelled.", ephemeral=True)
+                            return
+
+                        # Select all files
+                        select_payload = {}
+                        for fid, file_data in files_dict.items():
+                            select_payload[fid] = {
+                                "path": file_data["path"],
+                                "filename": file_data["filename"],
+                                "bytes": file_data["bytes"],
+                                "selected": 1
+                            }
+                        select_files_url = f"{riven_url}/scrape/scrape/select_files/{session_id}"
+                        sf_resp = requests.post(select_files_url, headers=headers, json=select_payload, verify=False)
+                        if sf_resp.status_code != 200:
+                            await confirm_int.followup.send("Failed to select files.", ephemeral=True)
+                            return
+
+                        # Parse filenames
+                        parse_url = f"{riven_url}/scrape/parse"
+                        parse_resp = requests.post(parse_url, headers=headers, json=file_list, verify=False)
+                        if parse_resp.status_code != 200:
+                            await confirm_int.followup.send("Failed to parse filenames.", ephemeral=True)
+                            return
+
+                        parse_data = parse_resp.json().get("data", [])
+                        attributes = {}
+                        for file_data in parse_data:
+                            season = file_data.get("seasons", [])[0] if file_data.get("seasons") else None
+                            episode = file_data.get("episodes", [])[0] if file_data.get("episodes") else None
+                            if season and episode:
+                                if str(season) not in attributes:
+                                    attributes[str(season)] = {}
+                                attributes[str(season)][str(episode)] = {
+                                    "filename": file_data["raw_title"],
+                                    "filesize": next((f["bytes"] for f in files_dict.values() if f["filename"] == file_data["raw_title"]), 0)
+                                }
+
+                        # Update attributes
+                        update_url = f"{riven_url}/scrape/scrape/update_attributes/{session_id}"
+                        up_resp = requests.post(update_url, headers=headers, json=attributes, verify=False)
+                        if up_resp.status_code != 200:
+                            await confirm_int.followup.send("Failed to update attributes.", ephemeral=True)
+                            return
+
+                        # Complete session
+                        complete_url = f"{riven_url}/scrape/scrape/complete_session/{session_id}"
+                        comp_resp = requests.post(complete_url, headers={
+                            'Accept': 'application/json',
+                            'Authorization': f'Bearer {riven_api_token}'
+                        }, verify=False)
+                        if comp_resp.status_code == 200:
+                            await confirm_int.followup.send("Scraping completed successfully!", ephemeral=True)
+                        else:
+                            await confirm_int.followup.send("Failed to complete session.", ephemeral=True)
+
+                    confirm_menu.callback = on_confirm_select
+                    confirm_view = discord.ui.View()
+                    confirm_view.add_item(confirm_menu)
+                    await select_int.followup.send(
+                        f"Found {len(file_list)} files. Review the episode list and confirm:",
+                        file=episode_file,
+                        view=confirm_view,
+                        ephemeral=True
+                    )
+                else:
+                    # Movie Logic (unchanged from your original)
+                    valid_files = []
+                    min_size = 200 * 1024 * 1024 if media_type.lower() == "movie" else 80 * 1024 * 1024
+                    valid_exts = (".mkv", ".avi", ".mp4")
+                    for fid, file_data in files_dict.items():
+                        fname = file_data.get("filename", "").lower()
+                        fsize = file_data.get("bytes", 0)
+                        if fname.endswith(valid_exts) and fsize >= min_size:
+                            valid_files.append({
+                                "session_id": session_id,
+                                "file_id": fid,
+                                "filename": file_data.get("filename"),
+                                "filesize": fsize
+                            })
+                    logger.info(f"[File Filter] Found {len(valid_files)} valid file(s) for session {session_id}.")
+                    if not valid_files:
+                        await select_int.followup.send("No valid files found in this stream.", ephemeral=True)
+                        return
+
+                    file_options = []
+                    for idx, file in enumerate(valid_files):
+                        file_options.append(discord.SelectOption(
+                            label=file["filename"][:100],
+                            value=str(idx)
+                        ))
+                    logger.info(f"[File Menu] Created {len(file_options)} file options for session {session_id}.")
+
+                    file_menu = discord.ui.Select(placeholder="Select a file", options=file_options)
+
+                    class FileView(discord.ui.View):
+                        def __init__(self, valid_files):
+                            super().__init__(timeout=180.0)
+                            self.valid_files = valid_files
+
+                    async def on_file_select(file_int: discord.Interaction):
+                        logger.info("[File Select] Callback triggered.")
+                        await file_int.response.defer(ephemeral=True)
+                        selected_idx = int(file_menu.values[0])
+                        selected_file = file_view.valid_files[selected_idx]
+                        session_id_sel = selected_file["session_id"]
+                        file_id_sel = selected_file["file_id"]
+                        filename_sel = selected_file["filename"]
+                        filesize_sel = selected_file["filesize"]
+
+                        payload = {
+                            file_id_sel: {
+                                "file_id": file_id_sel,
+                                "filename": filename_sel,
+                                "filesize": int(filesize_sel)
+                            }
+                        }
+                        logger.info(f"[Select Files] Payload: {payload}")
+                        select_files_url = f"{riven_url}/scrape/scrape/select_files/{session_id_sel}"
+                        try:
+                            sf_resp = requests.post(select_files_url, headers=headers, json=payload, verify=False)
+                            logger.info(f"[Select Files] Status: {sf_resp.status_code}")
+                            logger.info(f"[Select Files] Body: {sf_resp.text}")
+                        except Exception as e:
+                            logger.error(f"[Select Files] Exception: {e}")
+                            await file_int.followup.send(f"Error selecting file: {e}", ephemeral=True)
+                            return
+
+                        if sf_resp.status_code != 200:
+                            await file_int.followup.send("Failed to select file.", ephemeral=True)
+                            return
+
+                        update_url = f"{riven_url}/scrape/scrape/update_attributes/{session_id_sel}"
+                        update_payload = {"id": file_id_sel, "filename": filename_sel, "filesize": int(filesize_sel)}
+                        logger.info(f"[Update Attributes] URL: {update_url}")
+                        logger.info(f"[Update Attributes] Payload: {update_payload}")
+                        try:
+                            up_resp = requests.post(update_url, headers=headers, json=update_payload, verify=False)
+                            logger.info(f"[Update Attributes] Status: {up_resp.status_code}")
+                            logger.info(f"[Update Attributes] Body: {up_resp.text}")
+                        except Exception as e:
+                            logger.error(f"[Update Attributes] Exception: {e}")
+                            await file_int.followup.send(f"Error updating attributes: {e}", ephemeral=True)
+                            return
+
+                        if up_resp.status_code != 200:
+                            await file_int.followup.send("Failed to update attributes.", ephemeral=True)
+                            return
+
+                        complete_url = f"{riven_url}/scrape/scrape/complete_session/{session_id_sel}"
+                        logger.info(f"[Complete Session] URL: {complete_url}")
+                        try:
+                            comp_resp = requests.post(complete_url, headers={
+                                'Accept': 'application/json',
+                                'Authorization': f'Bearer {riven_api_token}'
+                            }, verify=False)
+                            logger.info(f"[Complete Session] Status: {comp_resp.status_code}")
+                            logger.info(f"[Complete Session] Body: {comp_resp.text}")
+                        except Exception as e:
+                            logger.error(f"[Complete Session] Exception: {e}")
+                            await file_int.followup.send(f"Error completing session: {e}", ephemeral=True)
+                            return
+
+                        if comp_resp.status_code != 200:
+                            await file_int.followup.send("Failed to complete session.", ephemeral=True)
+                            return
+
+                        await file_int.followup.send(f"Scraping session completed for file: {filename_sel}", ephemeral=True)
+
+                    file_menu.callback = on_file_select
+                    file_view = FileView(valid_files)
+                    file_view.add_item(file_menu)
+                    await select_int.followup.send("Step 3: Select a file:", ephemeral=True, view=file_view)
+            stream_menu.callback = on_stream_select
+            stream_view = discord.ui.View()
+            stream_view.add_item(stream_menu)
+            await wait_message.edit(content="Step 2: Select a stream:", view=stream_view)
+            animation_task.cancel()
+
+        except Exception as e:
+            logger.error(f"Error during scrape: {e}")
+            await wait_message.edit(content=f"An error occurred while scraping: {e}")
+            animation_task.cancel()
 
     async def magnets_button_callback(self, interaction: discord.Interaction):
         if not await check_authorization(interaction, self.initiator_id):
@@ -799,7 +1150,7 @@ async def on_raw_reaction_add(payload):
 
 @bot.command(name="latestreleases")
 async def latest_releases(ctx):
-    """Fetch the latest releases from Trakt, create a full-width poster grid image, and send it as a file with an attached select menu.
+    """Fetch the latest N releases from Trakt, create a full-width poster grid image, and send it as a file with an attached select menu.
     
     All required configuration keys must be present in config.json.
     The message will consist solely of the image attachment and the select menu.
