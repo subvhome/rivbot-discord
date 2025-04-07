@@ -1,0 +1,21 @@
+.git
+.gitignore
+data/*
+!data/config.example.json
+
+# Ignore Python bytecode files
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environments
+venv/
+
+# Ignore Docker-related files and logs
+docker-compose.yml
+Dockerfile
+*.log
+
+# Ignore README and setup files
+README.md
+SETUP.md
