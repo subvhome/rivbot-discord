@@ -1,9 +1,0 @@
-version: '3.8'
-
-services:
-  rivbot-discord:
-    build: .
-    container_name: rivbot-discord
-    volumes:
-      - ./data/config.json:/app/data/config.json:ro
-    restart: unless-stopped
